@@ -18,21 +18,131 @@ with open('puzzles.json') as f:
     pool = json.load(f)
 
 # --- 1. Puzzle selection & visual board display ---
-# TODO: a dropdown/selectbox to pick a puzzle by index from pool['puzzles'].
-# TODO: render the grid (e.g. a table or grid of st.columns), showing given
-# cells and empty cells differently (e.g. bold givens, blank otherwise).
+n, box_h, box_w = pool['n'], pool['box_h'], pool['box_w']
+
+st.sidebar.header('Settings')
+option = st.sidebar.selectbox(
+    "Puzzle selection",
+    (i for i in range(1, len(pool['puzzles']) + 1))
+)
+
+# givens keyed as (row, col), 1-indexed, to match the solver's expected input
+givens = {
+    tuple(int(x) for x in k.split('_')): v
+    for k, v in pool['puzzles'][option - 1]['givens'].items()
+}
+
+
+def render_grid(values, givens, target=st):
+    """Render an n x n grid as an HTML table with thick box borders.
+
+    values : dict[(int, int), int] -- cells to display
+    givens : dict[(int, int), int] -- cells to show in bold
+    target : where to draw it; pass an st.empty() to replace what's there
+    """
+    rows = []
+    for r in range(1, n + 1):
+        cells = []
+        for c in range(1, n + 1):
+            style = [
+                'width:2.2em', 'height:2.2em', 'text-align:center',
+                'font-size:1.2em', 'border:1px solid #999',
+            ]
+            if r % box_h == 1 or box_h == 1:
+                style.append('border-top:3px solid currentColor')
+            if r == n:
+                style.append('border-bottom:3px solid currentColor')
+            if c % box_w == 1 or box_w == 1:
+                style.append('border-left:3px solid currentColor')
+            if c == n:
+                style.append('border-right:3px solid currentColor')
+
+            v = values.get((r, c), '')
+            if (r, c) in givens:
+                text = f'<b>{v}</b>'
+            else:
+                text = f'<span style="color:#1f77b4">{v}</span>'
+            cells.append(f'<td style="{";".join(style)}">{text}</td>')
+        rows.append(f'<tr>{"".join(cells)}</tr>')
+    target.markdown(
+        f'<table style="border-collapse:collapse">{"".join(rows)}</table>',
+        unsafe_allow_html=True,
+    )
+
+
+st.header(f'Puzzle {option}')
+# one board: shows the givens now, redrawn with the solution once solved
+board = st.empty()
+render_grid(givens, givens, board)
 
 # --- 2. Full-grid auto-solver, with algorithm selection ---
-# TODO: a radio/selectbox letting the user choose forward chaining
-# (solve_full_grid_fc) or backward chaining (solve_full_grid_bc).
-# TODO: a button that times and calls the chosen solver on
-# (n, box_h, box_w, givens), then displays the solved grid and the elapsed
-# time.
+# label -> solver; every solver takes (n, box_h, box_w, givens)
+solvers = {
+    'Forward chaining': solve_full_grid_fc,
+    'Backward chaining': solve_full_grid_bc,
+}
+# shown under each option in the radio
+notes = {
+    'Forward chaining': 'Disabled: unoptimised, takes about 10 min in testing',
+    'Backward chaining': 'Goal-directed: proves each cell from the query back',
+}
+# listed so the implementation is visible, but too slow to run on the shared
+# server: one abandoned solve keeps a thread busy for every viewer
+disabled = {'Forward chaining'}
+algorithm = st.sidebar.radio(
+    'Algorithm', list(solvers), captions=[notes[k] for k in solvers]
+)
+
+if algorithm in disabled:
+    st.info(
+        'The unoptimised forward chaining solver is disabled here. Each cell '
+        'query re-runs forward chaining from scratch and discards what it '
+        'derived, so a full solve took about 10 minutes in testing.'
+    )
+if st.button('Solve', disabled=algorithm in disabled):
+    with st.spinner(f'Solving with {algorithm.lower()}...', show_time=True):
+        start = time.perf_counter()
+        solution = solvers[algorithm](n, box_h, box_w, givens)
+        elapsed = time.perf_counter() - start
+    # kept across reruns so using the query below doesn't clear the result
+    st.session_state['solved'] = (option, algorithm, solution, elapsed)
+
+# only show a result that matches the current puzzle and algorithm
+solved = st.session_state.get('solved')
+if solved and solved[:2] == (option, algorithm):
+    _, _, solution, elapsed = solved
+    render_grid(solution, givens, board)
+    st.caption('**Bold**: given, blue: solved')
+    st.write(f'Solved in {elapsed:.3f} s')
 
 # --- 3. Targeted cell entailment query ---
-# TODO: number inputs for row (r), column (c), value (v).
-# TODO: a button that builds the definite KB, calls
-# pl_bc_entails(kb, atom('Is', r, c, v)), and displays True/False.
+st.header('Cell entailment query')
+st.write('Ask whether the puzzle entails that a cell holds a value, using '
+         'backward chaining on the definite KB. Should take <1s.')
+col_r, col_c, col_v = st.columns(3)
+r = col_r.number_input('Row', min_value=1, max_value=n, step=1)
+c = col_c.number_input('Column', min_value=1, max_value=n, step=1)
+v = col_v.number_input('Value', min_value=1, max_value=n, step=1)
+
+if st.button('Check'):
+    with st.spinner(f'Checking Is({r}, {c}, {v})...', show_time=True):
+        start = time.perf_counter()
+        kb = build_definite_kb(n, box_h, box_w, givens)
+        entailed = pl_bc_entails(kb, atom('Is', r, c, v))
+        elapsed = time.perf_counter() - start
+    # kept across reruns, like the solved grid
+    st.session_state['query'] = (option, r, c, v, entailed, elapsed)
+
+# only show a result for the current puzzle and inputs
+query = st.session_state.get('query')
+if query and query[:4] == (option, r, c, v):
+    entailed, elapsed = query[4:]
+    message = f'KB ⊨ Is({r}, {c}, {v}): **{entailed}**'
+    if entailed:
+        st.success(message)
+    else:
+        st.error(message)
+    st.write(f'Checked in {elapsed:.3f} s')
 
 # --- 4. Reasoning trace ("tutor mode") ---
 # TODO: instrument your forward- or backward-chaining approach to record each
