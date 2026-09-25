@@ -116,9 +116,33 @@ if solved and solved[:2] == (option, algorithm):
     st.write(f'Solved in {elapsed:.3f} s')
 
 # --- 3. Targeted cell entailment query ---
-# TODO: number inputs for row (r), column (c), value (v).
-# TODO: a button that builds the definite KB, calls
-# pl_bc_entails(kb, atom('Is', r, c, v)), and displays True/False.
+st.header('Cell entailment query')
+st.write('Ask whether the puzzle entails that a cell holds a value, using '
+         'backward chaining on the definite KB. Should take <1s.')
+col_r, col_c, col_v = st.columns(3)
+r = col_r.number_input('Row', min_value=1, max_value=n, step=1)
+c = col_c.number_input('Column', min_value=1, max_value=n, step=1)
+v = col_v.number_input('Value', min_value=1, max_value=n, step=1)
+
+if st.button('Check'):
+    with st.spinner(f'Checking Is({r}, {c}, {v})...', show_time=True):
+        start = time.perf_counter()
+        kb = build_definite_kb(n, box_h, box_w, givens)
+        entailed = pl_bc_entails(kb, atom('Is', r, c, v))
+        elapsed = time.perf_counter() - start
+    # kept across reruns, like the solved grid
+    st.session_state['query'] = (option, r, c, v, entailed, elapsed)
+
+# only show a result for the current puzzle and inputs
+query = st.session_state.get('query')
+if query and query[:4] == (option, r, c, v):
+    entailed, elapsed = query[4:]
+    message = f'KB ⊨ Is({r}, {c}, {v}): **{entailed}**'
+    if entailed:
+        st.success(message)
+    else:
+        st.error(message)
+    st.write(f'Checked in {elapsed:.3f} s')
 
 # --- 4. Reasoning trace ("tutor mode") ---
 # TODO: instrument your forward- or backward-chaining approach to record each
