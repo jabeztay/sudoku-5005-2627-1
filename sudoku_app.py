@@ -76,11 +76,44 @@ board = st.empty()
 render_grid(givens, givens, board)
 
 # --- 2. Full-grid auto-solver, with algorithm selection ---
-# TODO: a radio/selectbox letting the user choose forward chaining
-# (solve_full_grid_fc) or backward chaining (solve_full_grid_bc).
-# TODO: a button that times and calls the chosen solver on
-# (n, box_h, box_w, givens), then displays the solved grid and the elapsed
-# time.
+# label -> solver; every solver takes (n, box_h, box_w, givens)
+solvers = {
+    'Forward chaining': solve_full_grid_fc,
+    'Backward chaining': solve_full_grid_bc,
+}
+# shown under each option in the radio
+notes = {
+    'Forward chaining': 'Disabled: unoptimised, takes about 10 min in testing',
+    'Backward chaining': 'Goal-directed: proves each cell from the query back',
+}
+# listed so the implementation is visible, but too slow to run on the shared
+# server: one abandoned solve keeps a thread busy for every viewer
+disabled = {'Forward chaining'}
+algorithm = st.sidebar.radio(
+    'Algorithm', list(solvers), captions=[notes[k] for k in solvers]
+)
+
+if algorithm in disabled:
+    st.info(
+        'The unoptimised forward chaining solver is disabled here. Each cell '
+        'query re-runs forward chaining from scratch and discards what it '
+        'derived, so a full solve took about 10 minutes in testing.'
+    )
+if st.button('Solve', disabled=algorithm in disabled):
+    with st.spinner(f'Solving with {algorithm.lower()}...', show_time=True):
+        start = time.perf_counter()
+        solution = solvers[algorithm](n, box_h, box_w, givens)
+        elapsed = time.perf_counter() - start
+    # kept across reruns so using the query below doesn't clear the result
+    st.session_state['solved'] = (option, algorithm, solution, elapsed)
+
+# only show a result that matches the current puzzle and algorithm
+solved = st.session_state.get('solved')
+if solved and solved[:2] == (option, algorithm):
+    _, _, solution, elapsed = solved
+    render_grid(solution, givens, board)
+    st.caption('**Bold**: given, blue: solved')
+    st.write(f'Solved in {elapsed:.3f} s')
 
 # --- 3. Targeted cell entailment query ---
 # TODO: number inputs for row (r), column (c), value (v).
