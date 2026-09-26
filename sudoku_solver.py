@@ -2,10 +2,7 @@
 
 Implement the functions marked below. Do not modify utils.py or logic_.py.
 """
-
 import sys
-from collections import defaultdict
-
 from utils import *
 from logic_ import *
 
@@ -29,57 +26,70 @@ def build_general_kb(n, box_h, box_w, givens):
     -------
     PropKB
     """
+
     kb = PropKB()
 
-    # every cell has at least one value from 1...n      -- n^2 clauses
-    for i in range(1, n+1):
-        for j in range(1, n+1):
-            at_least_one = [atom('Is', i, j, k) for k in range(1, n+1)]
-            kb.tell('|'.join([str(exp) for exp in at_least_one]))
+    # Each cell is assigned at least one value from 1 to n
 
-    # every cell has at most one value from 1...n       -- n^3(n-1)/2 clauses
-    # Redundant: with the clauses above, n cells per row and each value used
-    # at most once per row leave no room for a cell to take two values. Stated
-    # anyway, because it is a rule of the puzzle and dropping it would only
-    # weaken propagation.
-    for i in range(1, n+1):
-        for j in range(1, n+1):
-            for k in range(1, n+1):
-                for l in range(k+1, n+1):
-                    kb.tell(f'~{atom("Is", i, j, k)} | ~{atom("Is", i, j, l)}')
+    for r in range (1, n+1):
+        for c in range (1, n+1):
+            values = []
+            for v in range (1, n+1):
+                values.append(atom('Is', r, c, v))
+            kb.tell(associate('|', values))
 
-    # no two cells in the same row hold the same value  -- n^3(n-1)/2 clauses
-    for i in range(1, n+1):
-        for j in range(1, n+1):
-            for j2 in range(j+1, n+1):
-                for k in range(1, n+1):
-                    kb.tell(f'~{atom("Is", i, j, k)} | ~{atom("Is", i, j2, k)}')
+    # Each cell is assigned at most one value from 1 to n
 
-    # no two cells in the same column hold the same value   -- n^3(n-1)/2
-    for j in range(1, n+1):
-        for i in range(1, n+1):
-            for i2 in range(i+1, n+1):
-                for k in range(1, n+1):
-                    kb.tell(f'~{atom("Is", i, j, k)} | ~{atom("Is", i2, j, k)}')
+    for r in range (1, n+1):
+        for c in range (1, n+1):
+            for v in range (1, n+1):
+                for other_values in range (v+1, n+1):
+                    rcv = atom('Is', r, c, v)
+                    rcv_other = atom('Is', r, c, other_values)
+                    kb.tell(~(rcv & rcv_other)) # Cell does NOT have 2 values
 
-    # no two cells in the same box hold the same value  -- n^3(n+1-h-w)/2
-    # Box pairs that share a row or column are skipped: the loops above have
-    # already told that exact clause, so this is deduplication, not the
-    # dropping of an implied clause.
-    for r in range(1, n+1, box_h):
-        for c in range(1, n+1, box_w):
-            cells = [(r + dr, c + dc) for dr in range(box_h) for dc in range(box_w)]
-            for a in range(len(cells)):
-                for b in range(a+1, len(cells)):
-                    (r1, c1), (r2, c2) = cells[a], cells[b]
-                    if r1 == r2 or c1 == c2:
-                        continue
-                    for k in range(1, n+1):
-                        kb.tell(f'~{atom("Is", r1, c1, k)} | ~{atom("Is", r2, c2, k)}')
+    # No two cells in the same row hold the same value.
 
-    # given cells hold their stated values
-    for (r, c), v in givens.items():
-        kb.tell(atom('Is', r, c, v))
+    for r in range (1, n+1):
+        for c in range (1, n+1):
+            for c1 in range (c+1, n+1):
+                for v in range (1, n+1):
+                    rcv = atom('Is', r, c, v)
+                    rc1v = atom('Is', r, c1, v)
+                    kb.tell(~(rcv & rc1v)) # Cell value is NOT in row-column cell values
+
+    # No two cells in the same column hold the same value.
+
+    for c in range (1, n+1):
+        for r in range (1, n+1):
+            for r1 in range (r+1, n+1):
+                for v in range (1, n+1):
+                    rcv = atom('Is', r, c, v)
+                    r1cv = atom('Is', r1, c, v)
+                    kb.tell(~(rcv & r1cv)) # Cell value is NOT in column-row cell values
+
+    # No two cells in the same box hold the same value.
+
+    for box_r in range (1, n+1, box_h):
+        for box_c in range(1, n + 1, box_w): # Capture box row-column
+            cells = []
+            for r in range (box_r, box_r + box_h):
+                for c in range (box_c, box_c + box_w): # Capture box row-column cell
+                    cells.append((r, c)) # Store box cells into array
+            for i in range (len(cells)):
+                for j in range (i + 1, len(cells)): # Compare array item with other array items
+                    r, c = cells[i]
+                    r1, c1 = cells[j]
+                    for v in range(1, n + 1):
+                        cell1 = atom('Is', r, c, v)
+                        cell2 = atom('Is', r1, c1, v)
+                        kb.tell(~(cell1 & cell2)) # Cell value is NOT in box cell values
+
+    # The givens cells hold their stated values.
+
+    for (r,c),v in givens.items():
+        given = atom('Is', r, c, v)
+        kb.tell(given)
 
     return kb
 
@@ -97,70 +107,591 @@ def build_definite_kb(n, box_h, box_w, givens):
     -------
     PropDefiniteKB
     """
+
     kb = PropDefiniteKB()
 
-    # every cell has at most one value from 1...n: holding k rules out every
-    # other value in that cell                         -- n^3(n-1) clauses
-    for i in range(1, n+1):
-        for j in range(1, n+1):
-            for k in range(1, n+1):
-                for l in range(1, n+1):
-                    if l == k:
-                        continue
-                    kb.tell(expr(f'{atom("Is", i, j, k)} ==> {atom("Not", i, j, l)}'))
+    # Each cell is assigned at least one value from 1 to n
 
-    # every cell has at least one value from 1...n, so once the other n-1
-    # values are ruled out, k is the last candidate    -- n^3 clauses
-    # This is the Horn stand-in for the general KB's at-least-one clause: a
-    # bare disjunction is not a definite clause, so it is stated as the only
-    # inference it can soundly drive.
-    for i in range(1, n+1):
-        for j in range(1, n+1):
-            for k in range(1, n+1):
-                ruled_out = [atom('Not', i, j, l)
-                             for l in range(1, n+1) if l != k]
-                premise = ' & '.join([str(exp) for exp in ruled_out])
-                kb.tell(expr(f'{premise} ==> {atom("Is", i, j, k)}'))
+    for r in range (1, n+1):
+        for c in range (1, n+1):
+            for v in range (1, n+1):
+                conclusion = atom('Is', r, c, v)
+                exclude = []
+                for other_v in range (1, n+1):
+                    if other_v != v:
+                        exclude.append(atom('Not', r, c, other_v))
+                if not exclude: # Array of other values is empty for 1x1 table
+                    kb.tell(conclusion)
+                else: # Cell value is true if all other cell values are not true
+                    premise = associate('&', exclude)
+                    kb.tell(Expr('==>', premise, conclusion))
 
-    # no two cells in the same row hold the same value -- n^3(n-1) clauses
-    # Ordered pairs, unlike the general KB: an implication only fires one way,
-    # so both directions have to be stated separately.
-    for i in range(1, n+1):
-        for j in range(1, n+1):
-            for j2 in range(1, n+1):
-                if j2 == j:
-                    continue
-                for k in range(1, n+1):
-                    kb.tell(expr(f'{atom("Is", i, j, k)} ==> {atom("Not", i, j2, k)}'))
+    # Each cell is assigned at most one value from 1 to n
 
-    # no two cells in the same column hold the same value  -- n^3(n-1)
-    for j in range(1, n+1):
-        for i in range(1, n+1):
-            for i2 in range(1, n+1):
-                if i2 == i:
-                    continue
-                for k in range(1, n+1):
-                    kb.tell(expr(f'{atom("Is", i, j, k)} ==> {atom("Not", i2, j, k)}'))
+    for r in range (1, n+1):
+        for c in range (1, n+1):
+            for v in range (1, n+1):
+                premise = atom('Is', r, c, v)
+                for other_v in range (1, n+1):
+                    if other_v != v:
+                        conclusion = atom('Not', r, c, other_v)
+                        kb.tell(Expr('==>', premise, conclusion))
 
-    # no two cells in the same box hold the same value -- n^3(n+1-h-w)
-    # Same deduplication as the general KB: pairs sharing a row or column
-    # would repeat a clause already told above.
-    for r in range(1, n+1, box_h):
-        for c in range(1, n+1, box_w):
-            cells = [(r + dr, c + dc) for dr in range(box_h) for dc in range(box_w)]
-            for a in range(len(cells)):
-                for b in range(len(cells)):
-                    (r1, c1), (r2, c2) = cells[a], cells[b]
-                    if r1 == r2 or c1 == c2:
-                        continue
-                    for k in range(1, n+1):
-                        kb.tell(expr(f'{atom("Is", r1, c1, k)} ==> {atom("Not", r2, c2, k)}'))
+    # No two cells in the same row hold the same value.
 
-    # given cells hold their stated values
-    for (r, c), v in givens.items():
-        kb.tell(atom('Is', r, c, v))
+    for r in range (1, n+1):
+        for c in range (1, n+1):
+            for other_c in range (1, n+1):
+                if other_c != c:
+                    for v in range (1, n+1):
+                        premise = atom('Is', r, c, v)
+                        conclusion = atom('Not', r, other_c, v)
+                        kb.tell(Expr('==>', premise, conclusion))
+
+    # No two cells in the same column hold the same value.
+
+    for c in range (1, n+1):
+        for r in range (1, n+1):
+            for other_r in range (1, n+1):
+                if other_r != r:
+                    for v in range (1, n+1):
+                        premise = atom('Is', r, c, v)
+                        conclusion = atom('Not', other_r, c, v)
+                        kb.tell(Expr('==>', premise, conclusion))
+
+    # No two cells in the same box hold the same value.
+    for box_r in range(1, n + 1, box_h):
+        for box_c in range(1, n + 1, box_w):
+            cells = []
+            for r in range(box_r, box_r + box_h):
+                for c in range(box_c, box_c + box_w):
+                    cells.append((r, c)) # Store box cells into an array
+            for r1, c1 in cells:
+                for r2, c2 in cells:
+                    if (r1, c1) != (r2, c2):
+                        for v in range(1, n + 1):
+                            premise = atom('Is', r1, c1, v)
+                            conclusion = atom('Not', r2, c2, v)
+                            kb.tell(Expr('==>', premise, conclusion))
+
+    # The givens cells hold their stated values.
+
+    for (r,c),v in givens.items():
+        cell = atom('Is',r,c,v)
+        kb.tell(cell)
 
     return kb
+
+
+def solve_full_grid_fc(n, box_h, box_w, givens):
+    """Solve using build_definite_kb and pl_fc_entails.
+
+    Returns a dict {(row, col): value} for every cell.
+    Assumes valid, consistent givens.
+    """
+    kb = build_definite_kb(n, box_h, box_w, givens)
+
+    # Given cells are already solved; do not query them again.
+    solution = dict(givens)
+
+    row_used = [set() for _ in range(n)]
+    column_used = [set() for _ in range(n)]
+    box_used = [set() for _ in range(n)]
+
+    boxes_per_row = n // box_w
+
+    for (r, c), v in solution.items():
+        # Boxes are numbered from 0, left to right, then top to bottom.
+        # Box number = box row * boxes per row + box column.
+        box = ((r - 1) // box_h) * boxes_per_row + (c - 1) // box_w
+
+        row_used[r - 1].add(v)
+        column_used[c - 1].add(v)
+        box_used[box].add(v)
+
+    for r in range(1, n + 1):
+        for c in range(1, n + 1):
+            if (r, c) in solution:
+                continue
+
+            box = ((r - 1) // box_h) * boxes_per_row + (c - 1) // box_w
+
+            # Skip values already used in this row, column or box.
+            taken = (
+                row_used[r - 1]
+                | column_used[c - 1]
+                | box_used[box]
+            )
+
+            for v in range(1, n + 1):
+                if v in taken:
+                    continue
+
+                q = atom('Is', r, c, v)
+                truth = pl_fc_entails(kb, q)
+
+                if truth:
+                    solution[(r, c)] = v
+
+                    # Save the inferred fact for later queries.
+                    kb.tell(q)
+
+                    row_used[r - 1].add(v)
+                    column_used[c - 1].add(v)
+                    box_used[box].add(v)
+                    break
+
+    return solution
+
+def bc_index(kb):
+    """Build and maintain an index used by the backward chaining algorithm.
+
+    Backward chaining starts from a goal and asks:
+        "Which rules have this goal as their conclusion?"
+
+    For example, if the KB contains:
+
+        A & B ==> C
+        D ==> C
+
+    the index stores:
+
+        rules[C] = [[A, B], [D]]
+
+    This allows pl_bc_entails() to immediately find the rules that could
+    prove C, instead of scanning every clause in the KB each time.
+
+    The function returns three data structures:
+
+    facts
+        A set containing propositions that are explicitly known to be true
+        in the KB, such as the given Sudoku cells.
+
+    rules
+        A dictionary mapping each possible conclusion to the premises of
+        rules that can derive it.
+
+    proven
+        A set containing propositions that backward chaining has already
+        successfully derived. These results are kept so later queries can
+        reuse previous work instead of proving the same propositions again.
+
+    The index is stored inside the KB as '_bc_index'. This means repeated
+    calls to pl_bc_entails() on the same KB can reuse the existing index.
+
+    'seen' records how many KB clauses have already been indexed. If new
+    facts are added to the KB while solving the Sudoku, only those new
+    clauses need to be processed rather than rebuilding the whole index.
+
+    Returns
+    -------
+    facts : set
+        Propositions explicitly known to be true.
+
+    rules : defaultdict(list)
+        Maps a conclusion to the lists of premises that can derive it.
+
+    proven : set
+        Propositions previously derived successfully by backward chaining.
+    """
+
+    # Try to retrieve a backward-chaining index that was previously
+    # created for this KB.
+    #
+    # The cached tuple contains:
+    #
+    #   seen   = number of KB clauses already processed by this index
+    #   facts  = propositions explicitly known to be true
+    #   rules  = conclusion -> possible premise lists
+    #   proven = propositions previously derived by backward chaining
+    #
+    # If this is the first time bc_index() is called for this KB,
+    # '_bc_index' does not exist. getattr() therefore returns the
+    # default empty structures instead.
+    seen, facts, rules, proven = getattr(
+        kb,
+        '_bc_index',
+        (0, set(), defaultdict(list), set())
+    )
+
+    # Normally the KB only grows as new entailed facts are added.
+    #
+    # However, if the KB now contains fewer clauses than 'seen',
+    # some clauses must have been removed since the index was built.
+    #
+    # In that situation, previously stored facts, rules and proofs may
+    # depend on clauses that no longer exist. The cached information
+    # therefore cannot safely be reused, so rebuild the index from scratch.
+    if seen > len(kb.clauses):
+        seen = 0
+        facts = set()
+        rules = defaultdict(list)
+        proven = set()
+
+    # Process only clauses that have NOT already been indexed.
+    #
+    # For example, if 20,000 clauses were previously indexed and two new
+    # facts have since been added:
+    #
+    #     kb.clauses[seen:]
+    #
+    # contains only those two new clauses. This avoids repeatedly processing
+    # the entire KB every time pl_bc_entails() is called.
+    for c in kb.clauses[seen:]:
+
+        # ------------------------------------------------------------
+        # Case 1: The clause is a fact.
+        #
+        # A fact is a propositional symbol with no implication, e.g.:
+        #
+        #     Is2_1_2
+        #
+        # In Sudoku, the initial givens are examples of facts. New values
+        # proved while solving the grid may also later be added as facts.
+        #
+        # Facts form the base case of backward chaining: if the current
+        # goal is already in 'facts', no further proof is required.
+        # ------------------------------------------------------------
+        if is_prop_symbol(c.op):
+            facts.add(c)
+
+        # ------------------------------------------------------------
+        # Case 2: The clause is a definite rule.
+        #
+        # Example:
+        #
+        #     A & B ==> C
+        #
+        # parse_definite_clause() separates this into:
+        #
+        #     premises   = [A, B]
+        #     conclusion = C
+        #
+        # Backward chaining works from conclusion to premises, so the
+        # rule is stored under C:
+        #
+        #     rules[C].append([A, B])
+        #
+        # Later, when prove(C) is called, rules[C] immediately gives
+        # every possible rule that could establish C.
+        # ------------------------------------------------------------
+        elif c.op == '==>':
+            premises, conclusion = parse_definite_clause(c)
+            rules[conclusion].append(premises)
+
+    # Store the updated index directly on the KB.
+    #
+    # len(kb.clauses) becomes the new value of 'seen', indicating that
+    # every clause currently in the KB has now been indexed.
+    #
+    # 'proven' is stored together with the index so successful deductions
+    # made by one backward-chaining query remain available to later queries.
+    # This is particularly useful when solving all 81 Sudoku cells, because
+    # later cell queries can reuse deductions made while solving earlier ones.
+    kb._bc_index = (
+        len(kb.clauses),
+        facts,
+        rules,
+        proven
+    )
+
+    # Return the structures needed by pl_bc_entails().
+    return facts, rules, proven
+
+
+def pl_bc_entails(kb, query):
+    """Backward chaining algorithm implemented for Part A2.c and described in Part B.3.
+
+    The core logic of the backward chaining algorithm is based on the algorithm from the
+    lecture notes (Propositional Logic Slide 98):
+        1. Check whether the current goal is already a known fact.
+        2. Find rules whose conclusion matches the current goal.
+        3. For each matching rule, recursively prove every premise.
+        4. If all premises of any matching rule can be proved, return True.
+        5. Otherwise, return False.
+
+    However, the implementation also includes several improvements:
+    1. Indexing of the KB to allow for efficient retrieval of rules based on their conclusions
+       (implemented in a separate function bc_index).
+    2. Caching of proven goals to avoid redundant computations.
+    3. Loop detection to prevent infinite recursion in case of circular dependencies.
+    4. Prioritisation of rules whose premises contain more known facts or previously proven
+       goals. These rules are more likely to succeed without requiring further recursion.
+
+    Parameters
+    ----------
+    kb : PropDefiniteKB
+        The knowledge base containing facts and definite-clause rules.
+    query : Expr
+        The proposition that we want to determine is True or False.
+
+    Returns
+    -------
+    bool
+        True if the query can be proved from the KB, otherwise False.
+    """
+
+    # Retrieve:
+    #   facts  = propositions that are explicitly known to be True
+    #   rules  = dictionary mapping each conclusion to rules that can prove it
+    #   proven = propositions successfully proved by previous BC searches
+    facts, rules, proven = bc_index(kb)
+
+    # conclusion -> premises of the rule that proved it, read back by the
+    # app's reasoning trace through justifications(kb) / proof_steps()
+    why = justifications(kb)
+
+    # Sudoku reasoning can create long chains such as:
+    #
+    #     Is -> Not -> Is -> Not -> ...
+    #
+    # Increase Python's recursion limit so that a long valid proof chain
+    # does not cause a RecursionError before the algorithm finishes.
+    sys.setrecursionlimit(max(sys.getrecursionlimit(), 10000))
+
+    # 'active' contains goals currently being investigated along the present
+    # proof path.
+    #
+    # For example, if proving A requires B, proving B requires C, and proving
+    # C requires A, then A will already be in 'active'. This tells us that
+    # we have encountered a circular path and should stop following it.
+    active = set()
+
+    # 'failed' contains goals that have already failed during the CURRENT
+    # pass through the search.
+    #
+    # This prevents us from repeatedly performing the same unsuccessful
+    # search during one pass. It is cleared before the next pass because
+    # additional propositions may have been proved in the meantime.
+    failed = set()
+
+    def prove(goal):
+        """Try to prove one goal using backward chaining.
+
+        Think of 'goal' as a question such as:
+
+            "Can I prove Is1_1_1?"
+
+        The function first checks whether we already know the answer is True.
+        If not, it looks for rules that could produce the goal.
+
+        For example, if the goal is C and the KB contains:
+
+            A & B ==> C
+
+        then proving C becomes the smaller problem of proving both A and B.
+
+        If A or B is not already known, prove() calls itself recursively to
+        determine whether that premise can also be derived from other rules.
+
+        If there are several rules that conclude C, they represent alternative
+        ways of proving C. Only one complete rule needs to succeed.
+        """
+
+        # ------------------------------------------------------------
+        # Lecture Step 1:
+        # Check whether the goal is already known to be True.
+        #
+        # 'facts' contains propositions explicitly supplied to the KB.
+        # 'proven' contains propositions that backward chaining has
+        # successfully derived earlier.
+        #
+        # In either case, there is no need to search any further.
+        # ------------------------------------------------------------
+        if goal in facts or goal in proven:
+            return True
+
+        # ------------------------------------------------------------
+        # Loop detection and temporary failure caching.
+        #
+        # goal in active:
+        #     We have encountered the same goal again while it is still
+        #     being proved. Following it again would create a circular
+        #     chain and potentially infinite recursion.
+        #
+        # goal in failed:
+        #     We already tried and failed to prove this goal during the
+        #     current pass, so there is no need to repeat the same work.
+        # ------------------------------------------------------------
+        if goal in active or goal in failed:
+            return False
+
+        # Mark the goal as currently being investigated.
+        active.add(goal)
+
+        # ------------------------------------------------------------
+        # Lecture Step 2:
+        # Find rules whose conclusion matches the current goal.
+        #
+        # bc_index() has already organised the KB into a dictionary, so:
+        #
+        #     rules.get(goal, ())
+        #
+        # directly retrieves the rules that could prove this goal.
+        # ------------------------------------------------------------
+        matching_rules = rules.get(goal, ())
+
+        # ------------------------------------------------------------
+        # Improvement 4: prioritise promising rules.
+        #
+        # A goal may have many different rules that can prove it.
+        #
+        # Example:
+        #
+        #     A ==> C
+        #     B ==> C
+        #     D ==> C
+        #
+        # If B is already a known fact, trying "B ==> C" first is much
+        # cheaper than recursively investigating A or D.
+        #
+        # For each rule, count how many premises are NOT already known
+        # through either 'facts' or 'proven'.
+        #
+        # Fewer unknown premises = lower score = tried earlier.
+        #
+        # This changes only the ORDER in which rules are explored.
+        # It does not change which rules are available or the logical
+        # requirements for proving the goal.
+        # ------------------------------------------------------------
+        matching_rules = sorted(
+            matching_rules,
+            key=lambda premises: sum(
+                premise not in facts and premise not in proven
+                for premise in premises
+            )
+        )
+
+        # ------------------------------------------------------------
+        # Lecture Steps 3 and 4:
+        # Try each rule capable of producing the goal.
+        #
+        # Multiple rules are alternatives (OR):
+        #
+        #     A ==> C
+        #     B ==> C
+        #
+        # Either rule is sufficient to prove C.
+        # ------------------------------------------------------------
+        for premises in matching_rules:
+
+            # Within ONE rule, however, ALL premises must be True (AND).
+            #
+            # For example:
+            #
+            #     A & B & D ==> C
+            #
+            # requires A AND B AND D to all be proved.
+            #
+            # all() stops as soon as one premise returns False, so there
+            # is no unnecessary work after a rule has already failed.
+            if all(prove(p) for p in premises):
+
+                # Every premise of this rule has been proved.
+                # Therefore, by the rule, the current goal is also proved.
+                #
+                # Save it in 'proven' so that future searches can immediately
+                # reuse this result instead of deriving it again.
+                proven.add(goal)
+
+                # Record which rule proved it. Its premises were proved first,
+                # so entries stay in the order they were derived.
+                why.setdefault(goal, premises)
+
+                # We have finished investigating this goal, so remove it
+                # from the current recursive path.
+                active.discard(goal)
+
+                return True
+
+        # ------------------------------------------------------------
+        # Lecture Step 5:
+        # If we reach here, none of the available rules managed to prove
+        # the current goal.
+        # ------------------------------------------------------------
+
+        # This goal is no longer being actively investigated.
+        active.discard(goal)
+
+        # Remember the failure for the remainder of this pass so that the
+        # same unsuccessful search is not repeated unnecessarily.
+        failed.add(goal)
+
+        return False
+
+    # ----------------------------------------------------------------
+    # Repeat the backward-chaining search until a fixed point is reached.
+    #
+    # A goal can temporarily fail because part of its proof was blocked by
+    # a circular dependency. During the same search, however, other goals
+    # may successfully be proved and added to 'proven'.
+    #
+    # We therefore clear temporary failures and try again.
+    # ----------------------------------------------------------------
+    while True:
+
+        # Record how many propositions had already been proved before
+        # starting this pass.
+        settled = len(proven)
+
+        # Failures are temporary. A goal that failed previously may now
+        # become provable because new propositions have been established.
+        failed.clear()
+
+        # Try to prove the original query.
+        if prove(query):
+            return True
+
+        # If the entire pass finished without proving anything new, then
+        # another pass would have exactly the same information available.
+        #
+        # We have therefore reached a fixed point and the query cannot
+        # be proved from this KB.
+        if len(proven) == settled:
+            return False
+
+
+def solve_full_grid_bc(n, box_h, box_w, givens):
+    """Solve the whole puzzle using build_definite_kb + your own pl_bc_entails.
+
+    For each cell, try each candidate value until pl_bc_entails confirms one
+    -- the same per-cell strategy as solve_full_grid_fc, but backed by
+    backward chaining instead of a single shared forward-chaining pass.
+
+    Returns
+    -------
+    dict[(int, int), int] -- {(row, col): value} for every cell
+    """
+    kb = build_definite_kb(n, box_h, box_w, givens)
+    output = {}
+
+    for k, v in givens.items():
+        output[k] = v
+
+    for r in range(1, n+1):
+        for c in range(1, n+1):
+            # skip values already known
+            if (r, c) in output:
+                continue
+            # same pruning as the forward chaining solver: a value held by a
+            # peer cannot be entailed here, so asking would only walk the
+            # whole rule graph to come back False
+            taken = {output[p] for p in peers(r, c, n, box_h, box_w)
+                     if p in output}
+            for v in range(1, n+1):
+                if v in taken:
+                    continue
+                if pl_bc_entails(kb, atom('Is', r, c, v)):
+                    # asserting an entailed fact is sound, and it lets later
+                    # queries stop at a fact instead of re-deriving the chain
+                    kb.tell(atom('Is', r, c, v))
+                    output[(r, c)] = v
+                    break
+
+    return output
+
+
+# Adding modifications for FC to meet BC timing
 
 def peers(r, c, n, box_h, box_w):
     """Return the cells sharing a row, column, or box with (r, c)."""
@@ -312,49 +843,6 @@ def pl_fc_entails_cached(kb, q):
     return q in inferred
 
 
-def solve_full_grid_fc(n, box_h, box_w, givens):
-    """Solve the whole puzzle using build_definite_kb + pl_fc_entails.
-
-    For every unsolved cell, ask pl_fc_entails which value is entailed and
-    take the first one it confirms, so every value in the result is one
-    forward chaining derived from the KB.
-
-    Returns
-    -------
-    dict[(int, int), int] -- {(row, col): value} for every cell
-    """
-    kb = build_definite_kb(n, box_h, box_w, givens)
-    output = {}
-
-    for k, v in givens.items():
-        output[k] = v
-
-    for r in range(1, n+1):
-        for c in range(1, n+1):
-            # skip values already known
-            if (r,c) in output:
-                continue
-            # A value already held by a peer cannot be entailed here: the KB's
-            # row/column/box clauses give Not{r}_{c}_{v}, so the query would cost a
-            # full forward pass only to come back False. Skip it.
-            # this cuts from 40min -> 10min
-            taken = {output[p] for p in peers(r, c, n, box_h, box_w)
-                     if p in output}
-            for v in range(1, n+1):
-                if v in taken:
-                    continue
-                result = pl_fc_entails(kb, atom('Is', r, c, v))
-                if result:
-                    # Re-asserting an entailed fact is sound, and it puts the
-                    # symbol at the end of kb.clauses, so pl_fc_entails pops it
-                    # early and later queries hit its early exit sooner.
-                    kb.tell(atom("Is", r, c, v))
-                    output[(r, c)] = v
-                    break
-
-    return output
-
-
 def solve_full_grid_fc_recording(n, box_h, box_w, givens):
     """solve_full_grid_fc, backed by build_recording_kb.
 
@@ -387,25 +875,37 @@ def solve_full_grid_fc_recording(n, box_h, box_w, givens):
     return output
 
 
-def solve_full_grid_fc_cached(n, box_h, box_w, givens, kb=None):
+def solve_full_grid_fc_cached(n, box_h, box_w, givens):
     """solve_full_grid_fc, backed by pl_fc_entails_cached.
 
     Same per-cell strategy and the same KB; the only change is that forward
     chaining keeps what it derived between queries, so the whole grid costs
     about one forward pass instead of one per query.
 
+    Returns
+    -------
+    dict[(int, int), int] -- {(row, col): value} for every cell
+    """
+    kb = build_definite_kb(n, box_h, box_w, givens)
+    return solve_on_kb(kb, pl_fc_entails_cached, n, box_h, box_w, givens)
+
+
+def solve_on_kb(kb, entails, n, box_h, box_w, givens):
+    """Solve cell by cell on a KB the caller holds, asking entails(kb, query).
+
+    The same per-cell strategy as the full-grid solvers, but the caller builds
+    the KB and keeps it, so the reasoning can be read back afterwards with
+    justifications(kb).
+
     Parameters
     ----------
-    kb : PropDefiniteKB, optional -- a KB from build_definite_kb for these
-        givens, to solve on instead of building one; pass it to read the
-        reasoning back afterwards with justifications(kb)
+    kb : PropDefiniteKB -- from build_definite_kb for these givens
+    entails : pl_fc_entails_cached or pl_bc_entails
 
     Returns
     -------
     dict[(int, int), int] -- {(row, col): value} for every cell
     """
-    if kb is None:
-        kb = build_definite_kb(n, box_h, box_w, givens)
     output = dict(givens)
 
     for r in range(1, n+1):
@@ -417,104 +917,16 @@ def solve_full_grid_fc_cached(n, box_h, box_w, givens, kb=None):
             for v in range(1, n+1):
                 if v in taken:
                     continue
-                if pl_fc_entails_cached(kb, atom('Is', r, c, v)):
+                if entails(kb, atom('Is', r, c, v)):
+                    # asserting an entailed fact is sound, and it lets later
+                    # queries stop at a fact instead of re-deriving the chain
+                    kb.tell(atom('Is', r, c, v))
                     output[(r, c)] = v
                     break
 
     return output
 
-
-def bc_index(kb):
-    """Return (facts, rules, proven) for kb, where rules maps a consequent to
-    the list of premise lists that conclude it, and proven collects symbols
-    already derived from it.
-
-    pl_fc_entails walks facts forwards, so PropDefiniteKB only indexes clauses
-    by premise. Backward chaining needs the opposite direction, and rebuilding
-    it per query would dominate the run, so it is cached on the KB and extended
-    in place as solve_full_grid_bc tells newly entailed facts. proven rides
-    along because entailment is monotone -- telling more clauses can only add
-    consequences -- so a symbol derived for one query stays derived for the
-    next, which is what makes the per-cell queries share their work.
-    """
-    seen, facts, rules, proven = getattr(
-        kb, '_bc_index', (0, set(), defaultdict(list), set()))
-    if seen > len(kb.clauses):
-        # clauses were retracted; entailment is no longer monotone, so neither
-        # the index nor the derived symbols can be trusted
-        seen, facts, rules, proven = 0, set(), defaultdict(list), set()
-
-    for c in kb.clauses[seen:]:
-        if is_prop_symbol(c.op):
-            facts.add(c)
-        elif c.op == '==>':
-            premises, conclusion = parse_definite_clause(c)
-            rules[conclusion].append(premises)
-
-    kb._bc_index = (len(kb.clauses), facts, rules, proven)
-    return facts, rules, proven
-
-
-def pl_bc_entails(kb, query):
-    """Your own backward-chaining implementation.
-
-    Parameters
-    ----------
-    kb : PropDefiniteKB
-    query : Expr
-
-    Returns
-    -------
-    bool
-    """
-    facts, rules, proven = bc_index(kb)
-    why = justifications(kb)
-
-    # chains run Is -> Not -> Is -> ..., so a proof can stack up one frame per
-    # symbol in the KB -- deeper than the interpreter's default allowance
-    sys.setrecursionlimit(max(sys.getrecursionlimit(), 10000))
-
-    active = set()   # goals on the current branch; reaching one again is a loop
-    failed = set()   # goals that came up short during this pass only
-
-    def prove(goal):
-        if goal in facts or goal in proven:
-            return True
-        if goal in active or goal in failed:
-            # either the goal is its own sub-goal, so this branch is circular
-            # and offers no support, or this pass already came up short on it
-            return False
-
-        active.add(goal)
-        for premises in rules.get(goal, ()):
-            if all(prove(p) for p in premises):
-                # a derivation only ever consumes true answers, which bottom
-                # out in facts, so this holds no matter how we reached it
-                proven.add(goal)
-                # the rule that fired, kept for replaying the reasoning
-                why[goal] = premises
-                active.discard(goal)
-                return True
-        active.discard(goal)
-
-        failed.add(goal)
-        return False
-
-    # A failure is only as good as the branch it was found on: a goal can come
-    # up short while one of its ancestors is still open, yet be provable once
-    # that ancestor is settled. Caching failures anyway keeps each pass linear
-    # in the rules it touches; re-running the pass with those failures dropped
-    # is what recovers the ones that were only conditionally false. Every pass
-    # keeps whatever it proved, so a pass that proves nothing new is a fixed
-    # point and the remaining failures are genuine.
-    while True:
-        settled = len(proven)
-        failed.clear()
-        if prove(query):
-            return True
-        if len(proven) == settled:
-            return False
-
+# Adding for app reasoning trace
 
 def proof_steps(kb, query):
     """Return the rule firings that derived query, in the order they apply.
@@ -571,50 +983,3 @@ def bc_unproven_premises(kb, query):
     _, rules, _ = bc_index(kb)
     return [[p for p in premises if not pl_bc_entails(kb, p)]
             for premises in rules.get(query, ())]
-
-
-def solve_full_grid_bc(n, box_h, box_w, givens, kb=None):
-    """Solve the whole puzzle using build_definite_kb + your own pl_bc_entails.
-
-    For each cell, try each candidate value until pl_bc_entails confirms one
-    -- the same per-cell strategy as solve_full_grid_fc, but backed by
-    backward chaining instead of a single shared forward-chaining pass.
-
-    Parameters
-    ----------
-    kb : PropDefiniteKB, optional -- a KB from build_definite_kb for these
-        givens, to solve on instead of building one; pass it to read the
-        reasoning back afterwards with justifications(kb)
-
-    Returns
-    -------
-    dict[(int, int), int] -- {(row, col): value} for every cell
-    """
-    if kb is None:
-        kb = build_definite_kb(n, box_h, box_w, givens)
-    output = {}
-
-    for k, v in givens.items():
-        output[k] = v
-
-    for r in range(1, n+1):
-        for c in range(1, n+1):
-            # skip values already known
-            if (r, c) in output:
-                continue
-            # same pruning as the forward chaining solver: a value held by a
-            # peer cannot be entailed here, so asking would only walk the
-            # whole rule graph to come back False
-            taken = {output[p] for p in peers(r, c, n, box_h, box_w)
-                     if p in output}
-            for v in range(1, n+1):
-                if v in taken:
-                    continue
-                if pl_bc_entails(kb, atom('Is', r, c, v)):
-                    # asserting an entailed fact is sound, and it lets later
-                    # queries stop at a fact instead of re-deriving the chain
-                    kb.tell(atom('Is', r, c, v))
-                    output[(r, c)] = v
-                    break
-
-    return output

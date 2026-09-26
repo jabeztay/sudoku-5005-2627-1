@@ -11,6 +11,8 @@ from sudoku_solver import (
     solve_full_grid_fc,
     solve_full_grid_fc_cached,
     solve_full_grid_bc,
+    solve_on_kb,
+    pl_fc_entails_cached,
     pl_bc_entails,
     justifications,
     proof_steps,
@@ -190,8 +192,11 @@ notes = {
 # listed so the implementation is visible, but too slow to run on the shared
 # server: one abandoned solve keeps a thread busy for every viewer
 disabled = {'Forward chaining'}
-# these also take a KB to solve on, so its derivations can be read back
-traced = {'Forward chaining (cached)', 'Backward chaining'}
+# these are solved on a KB the app keeps, so its derivations can be read back
+traced = {
+    'Forward chaining (cached)': pl_fc_entails_cached,
+    'Backward chaining': pl_bc_entails,
+}
 algorithm = st.sidebar.radio(
     'Algorithm', list(solvers), captions=[notes[k] for k in solvers], index=1
 )
@@ -208,7 +213,8 @@ if st.button('Solve', disabled=algorithm in disabled):
         start = time.perf_counter()
         if algorithm in traced:
             kb = build_definite_kb(n, box_h, box_w, givens)
-            solution = solvers[algorithm](n, box_h, box_w, givens, kb=kb)
+            solution = solve_on_kb(kb, traced[algorithm],
+                                   n, box_h, box_w, givens)
             steps = deductions(justifications(kb))
         else:
             solution = solvers[algorithm](n, box_h, box_w, givens)
